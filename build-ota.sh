@@ -30,14 +30,25 @@ echo_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 echo_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 echo_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Parse build mode
-MODE="${1:-debug}"
+# Parse args
+HW_VER=""
+MODE=""
+for arg in "$@"; do
+    case "$arg" in
+        --ver=*) HW_VER="${arg#--ver=}" ;;
+        *) MODE="$arg" ;;
+    esac
+done
+MODE="${MODE:-debug}"
+HW_VER="${HW_VER:-0}"
 
 case "$MODE" in
     debug|release-debug|release|clean) ;;
     *)
-        echo "Usage: $0 [debug|release-debug|release|clean]"
+        echo "Usage: $0 [--ver=N] [debug|release-debug|release|clean]"
         echo ""
+        echo "  --ver=0         Hardware VER0 (default)"
+        echo "  --ver=1         Hardware VER1"
         echo "  debug           DEBUG + no sleep (default)"
         echo "  release-debug   DEBUG + sleep (for diagnosing sleep issues)"
         echo "  release         No debug, sleep enabled (production)"
@@ -60,21 +71,21 @@ if [ "$MODE" = "clean" ]; then
     exit 0
 fi
 
-echo -e "${CYAN}=== Building OTA firmware [${MODE}] ===${NC}"
+echo -e "${CYAN}=== Building OTA firmware [${MODE}] HW=VER${HW_VER} ===${NC}"
 echo ""
 
 # Determine make flags for each component
 case "$MODE" in
     debug)
-        APP_FLAGS="OTA=1"
+        APP_FLAGS="OTA=1 HW_VER=$HW_VER"
         IAP_FLAGS="DEBUG=1"
         ;;
     release-debug)
-        APP_FLAGS="OTA=1 RELEASE_DEBUG=1"
+        APP_FLAGS="OTA=1 RELEASE_DEBUG=1 HW_VER=$HW_VER"
         IAP_FLAGS="DEBUG=1"
         ;;
     release)
-        APP_FLAGS="OTA=1 RELEASE=1"
+        APP_FLAGS="OTA=1 RELEASE=1 HW_VER=$HW_VER"
         IAP_FLAGS=""
         ;;
 esac

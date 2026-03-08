@@ -15,6 +15,22 @@
 
 #include "CH59x_common.h"
 
+#ifdef DEBUG
+// Minimal dbg_printf for IAP: output via UART3 (same as main firmware)
+#include <stdarg.h>
+int dbg_printf(const char *fmt, ...)
+{
+    (void)fmt;
+    // IAP debug output: just send format string bytes directly for simplicity
+    const char *p = fmt;
+    while (*p) {
+        while (R8_UART3_TFC >= UART_FIFO_SIZE);
+        R8_UART3_THR = *p++;
+    }
+    return 0;
+}
+#endif
+
 /* Use V2 layout if IAP_AT_ZERO is defined */
 #ifdef IAP_AT_ZERO
 /* V2 Layout: IAP at 0x0000, App at 0x4000

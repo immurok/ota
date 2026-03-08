@@ -26,27 +26,28 @@ NC='\033[0m'
 # Parse args
 FLASH_ONLY=false
 MODE=""
+HW_VER=""
 
-case "${1:-}" in
-    -f|--flash-only)
-        FLASH_ONLY=true
-        ;;
-    debug|release-debug|release)
-        MODE="$1"
-        ;;
-    "")
-        MODE="debug"
-        ;;
-    *)
-        echo "Usage: $0 [debug|release-debug|release|-f]"
-        echo ""
-        echo "  debug           Rebuild debug + flash (default)"
-        echo "  release-debug   Rebuild release-debug + flash"
-        echo "  release         Rebuild release + flash"
-        echo "  -f              Flash only (skip rebuild)"
-        exit 1
-        ;;
-esac
+for arg in "$@"; do
+    case "$arg" in
+        --ver=*) HW_VER="${arg#--ver=}" ;;
+        -f|--flash-only) FLASH_ONLY=true ;;
+        debug|release-debug|release) MODE="$arg" ;;
+        *)
+            echo "Usage: $0 [--ver=N] [debug|release-debug|release|-f]"
+            echo ""
+            echo "  --ver=0         Hardware VER0 (default)"
+            echo "  --ver=1         Hardware VER1"
+            echo "  debug           Rebuild debug + flash (default)"
+            echo "  release-debug   Rebuild release-debug + flash"
+            echo "  release         Rebuild release + flash"
+            echo "  -f              Flash only (skip rebuild)"
+            exit 1
+            ;;
+    esac
+done
+MODE="${MODE:-debug}"
+HW_VER="${HW_VER:-0}"
 
 # Rebuild unless -f
 if [ "$FLASH_ONLY" = true ]; then
@@ -61,7 +62,7 @@ if [ "$FLASH_ONLY" = true ]; then
         echo -e "${CYAN}Flashing existing build${NC}"
     fi
 else
-    "$SCRIPT_DIR/build-ota.sh" "$MODE"
+    "$SCRIPT_DIR/build-ota.sh" --ver="$HW_VER" "$MODE"
     echo ""
 fi
 
