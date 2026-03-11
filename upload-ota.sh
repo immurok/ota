@@ -31,13 +31,14 @@ HW_VER=""
 for arg in "$@"; do
     case "$arg" in
         --ver=*) HW_VER="${arg#--ver=}" ;;
+        VER=*|ver=*) HW_VER="${arg#*=}" ;;
         -f|--flash-only) FLASH_ONLY=true ;;
         debug|release-debug|release) MODE="$arg" ;;
         *)
-            echo "Usage: $0 [--ver=N] [debug|release-debug|release|-f]"
+            echo "Usage: $0 [VER=N] [debug|release-debug|release|-f]"
             echo ""
-            echo "  --ver=0         Hardware VER0 (default)"
-            echo "  --ver=1         Hardware VER1"
+            echo "  VER=0           Hardware VER0 (default)"
+            echo "  VER=1           Hardware VER1"
             echo "  debug           Rebuild debug + flash (default)"
             echo "  release-debug   Rebuild release-debug + flash"
             echo "  release         Rebuild release + flash"

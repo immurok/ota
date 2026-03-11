@@ -36,6 +36,7 @@ MODE=""
 for arg in "$@"; do
     case "$arg" in
         --ver=*) HW_VER="${arg#--ver=}" ;;
+        VER=*|ver=*) HW_VER="${arg#*=}" ;;
         *) MODE="$arg" ;;
     esac
 done
@@ -45,10 +46,10 @@ HW_VER="${HW_VER:-0}"
 case "$MODE" in
     debug|release-debug|release|clean) ;;
     *)
-        echo "Usage: $0 [--ver=N] [debug|release-debug|release|clean]"
+        echo "Usage: $0 [VER=N] [debug|release-debug|release|clean]"
         echo ""
-        echo "  --ver=0         Hardware VER0 (default)"
-        echo "  --ver=1         Hardware VER1"
+        echo "  VER=0           Hardware VER0 (default)"
+        echo "  VER=1           Hardware VER1"
         echo "  debug           DEBUG + no sleep (default)"
         echo "  release-debug   DEBUG + sleep (for diagnosing sleep issues)"
         echo "  release         No debug, sleep enabled (production)"

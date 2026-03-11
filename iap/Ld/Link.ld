@@ -44,10 +44,20 @@ SECTIONS
     } >FLASH AT>FLASH
 
     /*
-     * NO .highcode section!
-     * IAP runs entirely from Flash and doesn't need interrupts.
-     * This keeps RAM 0x20000000 clean for App's vector table.
+     * .highcode: ISP library (FLASH_EEPROM_CMD) must execute from RAM
+     * when erasing/writing Flash. Placed at 0x20004000+ to avoid
+     * conflict with App's vector table at 0x20000000.
      */
+    .highcode :
+    {
+        . = ALIGN(4);
+        PROVIDE(_highcode_vma = .);
+        *(.highcode)
+        *(.highcode.*)
+        . = ALIGN(4);
+        PROVIDE(_ehighcode_vma = .);
+    } >RAM AT>FLASH
+    PROVIDE(_highcode_lma = LOADADDR(.highcode));
 
     .text :
     {

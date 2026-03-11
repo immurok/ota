@@ -35,10 +35,10 @@ handle_reset:
     bltu a0, a1, 1b
 2:
 
-    /* Copy data section from Flash to RAM */
-    la a0, _data_lma
-    la a1, _data_vma
-    la a2, _edata
+    /* Copy .highcode from Flash to RAM (ISP library needs to run from RAM) */
+    la a0, _highcode_lma
+    la a1, _highcode_vma
+    la a2, _ehighcode_vma
     bgeu a1, a2, 4f
 3:
     lw t0, 0(a0)
@@ -47,6 +47,19 @@ handle_reset:
     addi a1, a1, 4
     bltu a1, a2, 3b
 4:
+
+    /* Copy data section from Flash to RAM */
+    la a0, _data_lma
+    la a1, _data_vma
+    la a2, _edata
+    bgeu a1, a2, 6f
+5:
+    lw t0, 0(a0)
+    sw t0, 0(a1)
+    addi a0, a0, 4
+    addi a1, a1, 4
+    bltu a1, a2, 5b
+6:
 
     /* Disable interrupts - IAP doesn't need them */
     li t0, 0x80
