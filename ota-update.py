@@ -80,6 +80,33 @@ def parse_imfw(data):
     }
 
 
+def read_fw_version(imfw_path):
+    """Read firmware version from .fw_version file next to the .imfw, or from version.h."""
+    # Try .fw_version in same directory
+    build_dir = os.path.dirname(imfw_path)
+    ver_file = os.path.join(build_dir, ".fw_version")
+    if os.path.isfile(ver_file):
+        with open(ver_file) as f:
+            return f.read().strip()
+
+    # Try version.h relative to build dir (build/../APP/include/version.h)
+    version_h = os.path.join(build_dir, "..", "APP", "include", "version.h")
+    if os.path.isfile(version_h):
+        major = minor = patch = ""
+        with open(version_h) as f:
+            for line in f:
+                if "FW_VERSION_MAJOR" in line:
+                    major = line.split()[-1]
+                elif "FW_VERSION_MINOR" in line:
+                    minor = line.split()[-1]
+                elif "FW_VERSION_PATCH" in line:
+                    patch = line.split()[-1]
+        if major and minor and patch:
+            return f"{major}.{minor}.{patch}"
+
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="immurok 固件 OTA 升级工具")
     parser.add_argument("firmware", help="固件文件路径 (.imfw)")
@@ -101,10 +128,15 @@ def main():
         print("提示: 使用 python3 ota/ota-package.py firmware.bin 将明文固件打包为 .imfw")
         sys.exit(1)
 
+    # Read new firmware version
+    new_fw_version = read_fw_version(os.path.abspath(args.firmware))
+
     firmware = imfw["firmware"]
     fw_size = len(firmware)
     print(f"固件: {args.firmware}")
-    print(f"  版本: {imfw['version']}")
+    if new_fw_version:
+        print(f"  更新版本: {new_fw_version}")
+    print(f"  格式版本: {imfw['version']}")
     print(f"  硬件 ID: 0x{imfw['hw_id']:04X}")
     print(f"  明文大小: {imfw['fw_size']} bytes ({imfw['fw_size']/1024:.1f} KB)")
     print(f"  加密数据: {fw_size} bytes ({fw_size/1024:.1f} KB)")
@@ -129,6 +161,17 @@ def main():
     step = 0
 
     try:
+        # Query current firmware version
+        resp = send_cmd(sock, "OTA:VERSION")
+        if resp.startswith("OK:"):
+            current_version = resp[3:]
+            print(f"  当前版本: {current_version}")
+            if new_fw_version:
+                if current_version == new_fw_version:
+                    print(f"  注意: 更新版本与当前版本相同")
+                else:
+                    print(f"  升级路径: {current_version} → {new_fw_version}")
+
         # Step 1: Get device info
         step += 1
         print(f"\n[{step}/{total_steps}] 查询设备信息...")
@@ -221,6 +264,8 @@ def main():
         sock.close()
 
     print("\n升级完成！")
+    if new_fw_version:
+        print(f"新固件版本: {new_fw_version}")
     print("设备正在重启，IAP 将自动拷贝新固件...")
     print("请等待约 20 秒，设备将自动重新连接。")
 

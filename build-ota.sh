@@ -72,7 +72,14 @@ if [ "$MODE" = "clean" ]; then
     exit 0
 fi
 
-echo -e "${CYAN}=== Building OTA firmware [${MODE}] HW=VER${HW_VER} ===${NC}"
+# Read firmware version from version.h
+FW_VER_MAJOR=$(grep 'FW_VERSION_MAJOR' "$APP_DIR/APP/include/version.h" | awk '{print $3}')
+FW_VER_MINOR=$(grep 'FW_VERSION_MINOR' "$APP_DIR/APP/include/version.h" | awk '{print $3}')
+FW_VER_PATCH=$(grep 'FW_VERSION_PATCH' "$APP_DIR/APP/include/version.h" | awk '{print $3}')
+GIT_HASH=$(git -C "$PROJECT_DIR" rev-parse --short=4 HEAD 2>/dev/null || echo "0000")
+FW_VERSION="${FW_VER_MAJOR}.${FW_VER_MINOR}.${FW_VER_PATCH}.${GIT_HASH}"
+
+echo -e "${CYAN}=== Building OTA firmware [${MODE}] HW=VER${HW_VER} FW=${FW_VERSION} ===${NC}"
 echo ""
 
 # Determine make flags for each component
@@ -176,7 +183,7 @@ else
     echo ""
 fi
 
-echo -e "${CYAN}=== OTA Build Complete [${MODE}] ===${NC}"
+echo -e "${CYAN}=== OTA Build Complete [${MODE}] FW=${FW_VERSION} ===${NC}"
 echo ""
 echo "Flash Layout (V1 - WCH 方式一):"
 echo "  0x00000000 - 0x00001000: JumpIAP (4KB)"

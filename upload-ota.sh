@@ -57,10 +57,13 @@ if [ "$FLASH_ONLY" = true ]; then
         exit 1
     fi
     # Show what we're flashing
+    FW_VER_FILE="$FIRMWARE_BUILD/.fw_version"
+    FW_VER_STR=""
+    if [ -f "$FW_VER_FILE" ]; then FW_VER_STR=" FW=$(cat "$FW_VER_FILE")"; fi
     if [ -f "$MODE_FILE" ]; then
-        echo -e "${CYAN}Flashing existing build [$(cat "$MODE_FILE")]${NC}"
+        echo -e "${CYAN}Flashing existing build [$(cat "$MODE_FILE")]${FW_VER_STR}${NC}"
     else
-        echo -e "${CYAN}Flashing existing build${NC}"
+        echo -e "${CYAN}Flashing existing build${FW_VER_STR}${NC}"
     fi
 else
     "$SCRIPT_DIR/build-ota.sh" --ver="$HW_VER" "$MODE"
@@ -70,4 +73,9 @@ fi
 # Flash
 echo -e "${GREEN}[FLASH]${NC} Writing to device..."
 wlink --chip CH59X --speed high flash "$HEX_FILE"
-echo -e "${GREEN}[DONE]${NC} Flash complete."
+FW_VER_FILE="$FIRMWARE_BUILD/.fw_version"
+if [ -f "$FW_VER_FILE" ]; then
+    echo -e "${GREEN}[DONE]${NC} Flash complete. FW: $(cat "$FW_VER_FILE")"
+else
+    echo -e "${GREEN}[DONE]${NC} Flash complete."
+fi
