@@ -41,6 +41,9 @@ def send_cmd(sock, cmd):
     while True:
         chunk = sock.recv(4096)
         if not chunk:
+            # 连接关闭，返回缓冲区中已有的数据
+            if buf:
+                return buf.decode().strip()
             raise ConnectionError("连接断开")
         buf += chunk
         if b"\n" in buf:

@@ -243,7 +243,27 @@ static void JumpToApp(void)
     /* If IAP flag is set, copy Image B to A first */
     if(CurrImageFlag == IMAGE_IAP_FLAG)
     {
-        CopyImageBtoA();
+        /* Validate Image B before copying — if Image B is empty (all 0x00
+         * or 0xFF), copying would destroy the working Image A.
+         * This happens when wlink flash writes the combined hex (Image B
+         * area is zero-filled) but DataFlash retains IMAGE_IAP_FLAG from
+         * a previous OTA. */
+        uint32_t img_b_header;
+        FLASH_ROM_READ(IMAGE_B_START_ADD, (uint8_t *)&img_b_header, 4);
+#ifdef DEBUG
+        PRINT("Image B header: 0x%08X\n", (unsigned int)img_b_header);
+#endif
+        if(img_b_header != 0x00000000 && img_b_header != 0xFFFFFFFF)
+        {
+            CopyImageBtoA();
+        }
+        else
+        {
+#ifdef DEBUG
+            PRINT("Image B is empty, skip copy! Fixing flag...\n");
+#endif
+            SwitchImageFlag(IMAGE_A_FLAG);
+        }
     }
 #ifdef DEBUG
     else
