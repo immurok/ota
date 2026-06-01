@@ -32,24 +32,43 @@ echo_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Parse args
 HW_VER=""
+FW_VARIANT=""
 MODE=""
 for arg in "$@"; do
     case "$arg" in
         --ver=*) HW_VER="${arg#--ver=}" ;;
         VER=*|ver=*) HW_VER="${arg#*=}" ;;
+        # Optional color variant: unset → "IK-1" (general SKU); W/B/G →
+        # "IK-1-W/B/G". See firmware/Profile/devinfoservice.c.
+        --variant=*) FW_VARIANT="${arg#--variant=}" ;;
+        VARIANT=*|variant=*) FW_VARIANT="${arg#*=}" ;;
         *) MODE="$arg" ;;
     esac
 done
 MODE="${MODE:-debug}"
-HW_VER="${HW_VER:-0}"
+HW_VER="${HW_VER:-5}"
+
+# Validate variant if set
+if [ -n "$FW_VARIANT" ]; then
+    case "$FW_VARIANT" in
+        W|B|G) ;;
+        *)
+            echo_error "Unknown variant '$FW_VARIANT' (expected W, B, or G)"
+            exit 1
+            ;;
+    esac
+fi
 
 case "$MODE" in
     debug|release-debug|release|clean) ;;
     *)
         echo "Usage: $0 [VER=N] [debug|release-debug|release|clean]"
         echo ""
-        echo "  VER=0           Hardware VER0 (default)"
-        echo "  VER=1           Hardware VER1"
+        echo "  VER=0           Hardware VER0 (original prototype)"
+        echo "  VER=1           Hardware VER1 (Rev.1 board)"
+        echo "  VER=2           Hardware VER2 (Rev.2 board, ZW3021)"
+        echo "  VER=3           Hardware VER3 (Rev.2 board + R599S module)"
+        echo "  VER=5           Hardware VER5 (Rev.3 board — default, latest)"
         echo "  debug           DEBUG + no sleep (default)"
         echo "  release-debug   DEBUG + sleep (for diagnosing sleep issues)"
         echo "  release         No debug, sleep enabled (production)"
@@ -79,7 +98,15 @@ FW_VER_PATCH=$(grep 'FW_VERSION_PATCH' "$APP_DIR/APP/include/version.h" | awk '{
 GIT_HASH=$(git -C "$PROJECT_DIR" rev-parse --short=4 HEAD 2>/dev/null || echo "0000")
 FW_VERSION="${FW_VER_MAJOR}.${FW_VER_MINOR}.${FW_VER_PATCH}.${GIT_HASH}"
 
-echo -e "${CYAN}=== Building OTA firmware [${MODE}] HW=VER${HW_VER} FW=${FW_VERSION} ===${NC}"
+# Mode short suffix for dist/ filenames: release=r, debug=d, release-debug=rd
+case "$MODE" in
+    release)        MODE_SHORT="r" ;;
+    debug)          MODE_SHORT="d" ;;
+    release-debug)  MODE_SHORT="rd" ;;
+esac
+
+SKU_LABEL="${FW_VARIANT:-general}"
+echo -e "${CYAN}=== Building OTA firmware [${MODE}] HW=VER${HW_VER} SKU=${SKU_LABEL} FW=${FW_VERSION} ===${NC}"
 echo ""
 
 # Determine make flags for each component
@@ -97,6 +124,11 @@ case "$MODE" in
         IAP_FLAGS=""
         ;;
 esac
+
+# Pass variant through (only when set, so default builds get unset FW_VARIANT)
+if [ -n "$FW_VARIANT" ]; then
+    APP_FLAGS="$APP_FLAGS FW_VARIANT=$FW_VARIANT"
+fi
 
 # Clean first
 clean_all
@@ -173,6 +205,32 @@ if [ -f "$PACKAGE_SCRIPT" ] && [ -f "$KEYS_FILE" ]; then
     if [ $? -eq 0 ]; then
         imfw_size=$(stat -f%z "$IMFW_OUTPUT" 2>/dev/null || stat -c%s "$IMFW_OUTPUT" 2>/dev/null)
         echo_info ".imfw size: $imfw_size bytes ($(( imfw_size / 1024 ))KB)"
+
+        # Preserve outputs in firmware/dist/ across subsequent builds
+        # (which `make clean` -> rm -rf build/).
+        # Naming (variant-suffixed only when --variant= was passed):
+        #   fw-{ver}-{V}-{mode}.imfw   App-only encrypted+signed OTA package
+        #                              (push to fielded devices via BLE)
+        #   ota-{ver}-{V}-{mode}.bin   Full flash image, raw binary
+        #   ota-{ver}-{V}-{mode}.hex   Full flash image, Intel HEX
+        #                              (JumpIAP + App + IAP, factory wlink)
+        # General-SKU builds (no --variant): the {V} segment is omitted.
+        RELEASE_DIR="$APP_DIR/dist"
+        if [ -n "$FW_VARIANT" ]; then
+            FW_STEM="fw-${FW_VERSION}-${FW_VARIANT}-${MODE_SHORT}"
+            OTA_STEM="ota-${FW_VERSION}-${FW_VARIANT}-${MODE_SHORT}"
+        else
+            FW_STEM="fw-${FW_VERSION}-${MODE_SHORT}"
+            OTA_STEM="ota-${FW_VERSION}-${MODE_SHORT}"
+        fi
+        mkdir -p "$RELEASE_DIR"
+        cp "$IMFW_OUTPUT" "$RELEASE_DIR/${FW_STEM}.imfw"
+        cp "$output" "$RELEASE_DIR/${OTA_STEM}.bin" 2>/dev/null || true
+        if [ -f "$OUTPUT_DIR/immurok_OTA_Combined.hex" ]; then
+            cp "$OUTPUT_DIR/immurok_OTA_Combined.hex" \
+               "$RELEASE_DIR/${OTA_STEM}.hex"
+        fi
+        echo_info "Preserved: ${FW_STEM}.imfw + ${OTA_STEM}.{bin,hex}"
     else
         echo_warn ".imfw packaging failed (OTA keys may be missing)"
     fi

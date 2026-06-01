@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""immurok 固件加密打包工具
+"""immurok firmware encryption/packaging tool
 
-将 .bin 固件打包为 .imfw 格式（加密 + 签名）。
+Packages a .bin firmware into .imfw format (encrypted + signed).
 
-.imfw 格式 (96 字节头 + 加密数据):
+.imfw layout (96-byte header + encrypted data):
   0x00  4  Magic "IMFW"
   0x04  1  Format version
   0x05  1  Flags (reserved)
@@ -15,7 +15,7 @@
   0x40 32  HMAC-SHA256(signing_key, header[0:0x40])
   0x60  .  AES-128-CTR encrypted firmware
 
-用法: python3 ota-package.py firmware.bin [-o output.imfw]
+Usage: python3 ota-package.py firmware.bin [-o output.imfw]
 """
 
 import argparse
@@ -33,7 +33,7 @@ sys.path.insert(0, SCRIPT_DIR)
 try:
     from ota_keys import OTA_AES_KEY, OTA_SIGNING_KEY
 except ImportError:
-    print("错误: 找不到 ota_keys.py，请先运行 generate_ota_keys.py")
+    print("Error: ota_keys.py not found, run generate_ota_keys.py first")
     sys.exit(1)
 
 IMFW_MAGIC = 0x494D4657  # "IMFW"
@@ -72,13 +72,13 @@ def aes128_ctr_encrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="immurok 固件加密打包工具")
-    parser.add_argument("firmware", help="固件文件路径 (.bin)")
-    parser.add_argument("-o", "--output", help="输出文件路径 (默认: 同名 .imfw)")
+    parser = argparse.ArgumentParser(description="immurok firmware encryption/packaging tool")
+    parser.add_argument("firmware", help="firmware file path (.bin)")
+    parser.add_argument("-o", "--output", help="output file path (default: same name with .imfw)")
     args = parser.parse_args()
 
     if not os.path.isfile(args.firmware):
-        print(f"错误: 文件不存在: {args.firmware}")
+        print(f"Error: file not found: {args.firmware}")
         sys.exit(1)
 
     with open(args.firmware, "rb") as f:
@@ -86,10 +86,10 @@ def main():
 
     fw_size = len(firmware)
     if fw_size > IMAGE_B_SIZE:
-        print(f"错误: 固件太大 ({fw_size} bytes > {IMAGE_B_SIZE} bytes)")
+        print(f"Error: firmware too large ({fw_size} bytes > {IMAGE_B_SIZE} bytes)")
         sys.exit(1)
     if fw_size == 0:
-        print("错误: 固件文件为空")
+        print("Error: firmware file is empty")
         sys.exit(1)
 
     # Determine output path
@@ -99,8 +99,8 @@ def main():
         base = os.path.splitext(args.firmware)[0]
         output_path = base + ".imfw"
 
-    print(f"固件: {args.firmware}")
-    print(f"大小: {fw_size} bytes ({fw_size/1024:.1f} KB)")
+    print(f"Firmware: {args.firmware}")
+    print(f"Size:     {fw_size} bytes ({fw_size/1024:.1f} KB)")
 
     # Generate random IV
     iv = os.urandom(16)
@@ -131,7 +131,7 @@ def main():
     assert len(header) == 96
 
     # Encrypt firmware
-    print("加密固件...")
+    print("Encrypting firmware...")
     encrypted = aes128_ctr_encrypt(OTA_AES_KEY, iv, firmware)
 
     # Write .imfw file
@@ -140,10 +140,10 @@ def main():
         f.write(encrypted)
 
     total_size = 96 + len(encrypted)
-    print(f"\n输出: {output_path}")
-    print(f"总大小: {total_size} bytes ({total_size/1024:.1f} KB)")
-    print(f"  头部: 96 bytes")
-    print(f"  加密数据: {len(encrypted)} bytes")
+    print(f"\nOutput: {output_path}")
+    print(f"Total size:     {total_size} bytes ({total_size/1024:.1f} KB)")
+    print(f"  Header:       96 bytes")
+    print(f"  Encrypted:    {len(encrypted)} bytes")
 
 
 if __name__ == "__main__":

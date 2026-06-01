@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""生成 OTA 加密/签名密钥
+"""Generate OTA encryption/signing keys
 
-生成两个文件:
-  - firmware/APP/include/ota_keys.h (C 头文件)
-  - ota/ota_keys.py (Python 密钥文件)
+Generates two files:
+  - firmware/APP/include/ota_keys.h (C header)
+  - ota/ota_keys.py (Python key file)
 
-两个文件都不应入 git。
+Neither file should be committed to git.
 """
 
 import os
@@ -27,13 +27,13 @@ def format_c_array(name: str, data: bytes) -> str:
 def main():
     # Check if keys already exist
     if os.path.exists(C_HEADER_PATH) and os.path.exists(PY_KEYS_PATH):
-        print(f"密钥文件已存在:")
+        print(f"Key files already exist:")
         print(f"  {C_HEADER_PATH}")
         print(f"  {PY_KEYS_PATH}")
         if "--force" not in sys.argv:
-            print("如需重新生成，请使用 --force 参数")
+            print("Use --force to regenerate")
             sys.exit(1)
-        print("--force: 重新生成密钥")
+        print("--force: regenerating keys")
 
     # Generate keys
     aes_key = secrets.token_bytes(16)   # AES-128 key
@@ -62,7 +62,7 @@ def main():
     os.makedirs(os.path.dirname(C_HEADER_PATH), exist_ok=True)
     with open(C_HEADER_PATH, "w") as f:
         f.write(c_content)
-    print(f"已生成: {C_HEADER_PATH}")
+    print(f"Generated: {C_HEADER_PATH}")
 
     # Write Python keys
     py_content = f"""\
@@ -74,9 +74,9 @@ OTA_SIGNING_KEY = bytes.fromhex("{signing_key.hex()}")
 """
     with open(PY_KEYS_PATH, "w") as f:
         f.write(py_content)
-    print(f"已生成: {PY_KEYS_PATH}")
+    print(f"Generated: {PY_KEYS_PATH}")
 
-    print("\n密钥生成完成。请确保这两个文件不被提交到 git。")
+    print("\nKey generation complete. Make sure these files are not committed to git.")
 
 
 if __name__ == "__main__":

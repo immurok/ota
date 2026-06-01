@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""immurok 固件 OTA 升级工具
+"""immurok firmware OTA update tool
 
-通过 Unix socket 连接 immurok App，将加密签名固件写入设备 Image B。
-设备收到 END 命令后验证 SHA256 + HMAC，通过后重启，IAP 将 Image B 拷贝到 Image A。
+Connects to the immurok daemon via Unix socket, writes encrypted+signed
+firmware to device Image B. After receiving the END command, the device
+verifies SHA256 + HMAC, then reboots and IAP copies Image B to Image A.
 
-仅支持 .imfw 格式（加密 + 签名），不支持明文 .bin。
-使用 ota-package.py 将 .bin 打包为 .imfw。
+Only .imfw format (encrypted + signed) is supported.
+Use ota-package.py to package a .bin into .imfw.
 
-用法: python3 ota-update.py [--socket PATH] firmware.imfw
+Usage: python3 ota-update.py [--socket PATH] [firmware.imfw]
+
+If firmware path is omitted, defaults to the latest build output:
+  <project_root>/firmware/build/immurok_CH592F.imfw
 """
 
 import argparse
@@ -19,7 +23,20 @@ import struct
 import sys
 import time
 
-SOCKET_PATH = str(pathlib.Path.home() / ".immurok" / "pam.sock")
+def _default_socket_path():
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg:
+        return os.path.join(xdg, "immurok", "pam.sock")
+    return str(pathlib.Path.home() / ".immurok" / "pam.sock")
+
+def _default_firmware_path():
+    # Script lives at <project>/ota/ota-update.py; build output at
+    # <project>/firmware/build/immurok_CH592F.imfw
+    script_dir = pathlib.Path(__file__).resolve().parent
+    return str(script_dir.parent / "firmware" / "build" / "immurok_CH592F.imfw")
+
+SOCKET_PATH = _default_socket_path()
+DEFAULT_FW_PATH = _default_firmware_path()
 IMAGE_B_SIZE = 216 * 1024  # 216KB
 CHUNK_SIZE = 240  # ≤243, 16-byte aligned
 IMFW_MAGIC = 0x494D4657  # "IMFW"
@@ -41,10 +58,9 @@ def send_cmd(sock, cmd):
     while True:
         chunk = sock.recv(4096)
         if not chunk:
-            # 连接关闭，返回缓冲区中已有的数据
             if buf:
                 return buf.decode().strip()
-            raise ConnectionError("连接断开")
+            raise ConnectionError("connection closed")
         buf += chunk
         if b"\n" in buf:
             line, _ = buf.split(b"\n", 1)
@@ -111,14 +127,21 @@ def read_fw_version(imfw_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="immurok 固件 OTA 升级工具")
-    parser.add_argument("firmware", help="固件文件路径 (.imfw)")
-    parser.add_argument("--socket", default=SOCKET_PATH, help=f"Unix socket 路径 (默认 {SOCKET_PATH})")
+    parser = argparse.ArgumentParser(description="immurok firmware OTA update tool")
+    parser.add_argument(
+        "firmware",
+        nargs="?",
+        default=DEFAULT_FW_PATH,
+        help=f"firmware file path (.imfw) (default: {DEFAULT_FW_PATH})",
+    )
+    parser.add_argument("--socket", default=SOCKET_PATH, help=f"Unix socket path (default {SOCKET_PATH})")
     args = parser.parse_args()
 
     # Read firmware file
     if not os.path.isfile(args.firmware):
-        print(f"错误: 文件不存在: {args.firmware}")
+        print(f"Error: file not found: {args.firmware}")
+        if args.firmware == DEFAULT_FW_PATH:
+            print("Hint: run ota/build-ota.sh first to produce the default .imfw")
         sys.exit(1)
 
     with open(args.firmware, "rb") as f:
@@ -127,8 +150,8 @@ def main():
     # Parse .imfw format
     imfw = parse_imfw(file_data)
     if imfw is None:
-        print("错误: 不是有效的 .imfw 文件（仅支持加密签名固件）")
-        print("提示: 使用 python3 ota/ota-package.py firmware.bin 将明文固件打包为 .imfw")
+        print("Error: not a valid .imfw file (only encrypted+signed firmware supported)")
+        print("Hint: use python3 ota/ota-package.py firmware.bin to package a .bin into .imfw")
         sys.exit(1)
 
     # Read new firmware version
@@ -136,28 +159,28 @@ def main():
 
     firmware = imfw["firmware"]
     fw_size = len(firmware)
-    print(f"固件: {args.firmware}")
+    print(f"Firmware: {args.firmware}")
     if new_fw_version:
-        print(f"  更新版本: {new_fw_version}")
-    print(f"  格式版本: {imfw['version']}")
-    print(f"  硬件 ID: 0x{imfw['hw_id']:04X}")
-    print(f"  明文大小: {imfw['fw_size']} bytes ({imfw['fw_size']/1024:.1f} KB)")
-    print(f"  加密数据: {fw_size} bytes ({fw_size/1024:.1f} KB)")
+        print(f"  Version:        {new_fw_version}")
+    print(f"  Format version: {imfw['version']}")
+    print(f"  Hardware ID:    0x{imfw['hw_id']:04X}")
+    print(f"  Plaintext size: {imfw['fw_size']} bytes ({imfw['fw_size']/1024:.1f} KB)")
+    print(f"  Encrypted size: {fw_size} bytes ({fw_size/1024:.1f} KB)")
 
     if fw_size > IMAGE_B_SIZE:
-        print(f"错误: 固件太大 ({fw_size} bytes > {IMAGE_B_SIZE} bytes)")
+        print(f"Error: firmware too large ({fw_size} bytes > {IMAGE_B_SIZE} bytes)")
         sys.exit(1)
 
     if fw_size == 0:
-        print("错误: 固件文件为空")
+        print("Error: firmware file is empty")
         sys.exit(1)
 
     # Connect to socket
-    print(f"\n连接 {args.socket} ...")
+    print(f"\nConnecting to {args.socket} ...")
     try:
         sock = connect_socket(args.socket)
     except (FileNotFoundError, ConnectionRefusedError):
-        print("错误: 无法连接 immurok App (socket 不存在或 App 未运行)")
+        print("Error: cannot connect to immurok daemon (socket missing or daemon not running)")
         sys.exit(1)
 
     total_steps = 5
@@ -168,19 +191,19 @@ def main():
         resp = send_cmd(sock, "OTA:VERSION")
         if resp.startswith("OK:"):
             current_version = resp[3:]
-            print(f"  当前版本: {current_version}")
+            print(f"  Current version: {current_version}")
             if new_fw_version:
                 if current_version == new_fw_version:
-                    print(f"  注意: 更新版本与当前版本相同")
+                    print(f"  Note: update version matches current version")
                 else:
-                    print(f"  升级路径: {current_version} → {new_fw_version}")
+                    print(f"  Upgrade path: {current_version} -> {new_fw_version}")
 
         # Step 1: Get device info
         step += 1
-        print(f"\n[{step}/{total_steps}] 查询设备信息...")
+        print(f"\n[{step}/{total_steps}] Querying device info...")
         resp = send_cmd(sock, "OTA:INFO")
         if not resp.startswith("OK:"):
-            print(f"错误: {resp}")
+            print(f"Error: {resp}")
             sys.exit(1)
 
         parts = resp.split(":")
@@ -195,34 +218,34 @@ def main():
             print(f"  Block Size: {block_size} bytes")
             print(f"  Chip ID:    0x{chip_id:04X}")
         else:
-            print(f"  响应: {resp}")
+            print(f"  Response: {resp}")
 
         # Step 2: Erase Image B
         step += 1
-        print(f"\n[{step}/{total_steps}] 擦除 Image B (约需 3-5 秒)...")
+        print(f"\n[{step}/{total_steps}] Erasing Image B (~3-5 seconds)...")
         sock.settimeout(30)
         t0 = time.time()
         resp = send_cmd(sock, "OTA:ERASE")
         elapsed = time.time() - t0
         if resp != "OK":
-            print(f"错误: 擦除失败 - {resp}")
+            print(f"Error: erase failed - {resp}")
             sys.exit(1)
-        print(f"  擦除完成 ({elapsed:.1f}s)")
+        print(f"  Erase complete ({elapsed:.1f}s)")
 
         # Step 3: Send HEADER
         step += 1
-        print(f"\n[{step}/{total_steps}] 发送加密头部...")
+        print(f"\n[{step}/{total_steps}] Sending encrypted header...")
         hdr_b64 = base64.b64encode(imfw["header"]).decode()
         resp = send_cmd(sock, f"OTA:HEADER:{hdr_b64}")
         if resp != "OK":
-            print(f"错误: 头部被拒绝 - {resp}")
+            print(f"Error: header rejected - {resp}")
             sys.exit(1)
-        print("  头部已接受")
+        print("  Header accepted")
 
         # Step 4: Write encrypted firmware
         step += 1
         total_chunks = (fw_size + CHUNK_SIZE - 1) // CHUNK_SIZE
-        print(f"\n[{step}/{total_steps}] 写入加密数据 ({total_chunks} 个数据包)...")
+        print(f"\n[{step}/{total_steps}] Writing encrypted data ({total_chunks} chunks)...")
         t0 = time.time()
 
         for i in range(total_chunks):
@@ -232,45 +255,45 @@ def main():
             cmd = f"OTA:WRITE:{offset:04x}:{b64}"
             resp = send_cmd(sock, cmd)
             if resp != "OK":
-                print(f"\n错误: 写入失败 @ offset 0x{offset:04x} - {resp}")
+                print(f"\nError: write failed @ offset 0x{offset:04x} - {resp}")
                 sys.exit(1)
-            progress_bar(i + 1, total_chunks, prefix="  写入")
+            progress_bar(i + 1, total_chunks, prefix="  Writing")
 
         elapsed = time.time() - t0
         speed = fw_size / elapsed / 1024 if elapsed > 0 else 0
-        print(f"\n  写入完成 ({elapsed:.1f}s, {speed:.1f} KB/s)")
+        print(f"\n  Write complete ({elapsed:.1f}s, {speed:.1f} KB/s)")
 
         # Step 5: End - verify signature + reboot
         step += 1
-        print(f"\n[{step}/{total_steps}] 验证签名并重启...")
+        print(f"\n[{step}/{total_steps}] Verifying signature and rebooting...")
         sock.settimeout(10)
         resp = send_cmd(sock, "OTA:END")
 
         if resp == "OK":
-            print(f"  设备即将重启")
+            print(f"  Device rebooting")
         elif "SHA256" in resp:
-            print(f"  错误: 固件完整性校验失败 (SHA256 不匹配)")
+            print(f"  Error: integrity check failed (SHA256 mismatch)")
             sys.exit(1)
         elif "HMAC" in resp:
-            print(f"  错误: 固件签名验证失败 (非官方固件)")
+            print(f"  Error: signature verification failed (unofficial firmware)")
             sys.exit(1)
         else:
-            print(f"  响应: {resp}")
+            print(f"  Response: {resp}")
 
     except socket.timeout:
-        print("\n错误: 通信超时")
+        print("\nError: communication timeout")
         sys.exit(1)
     except ConnectionError as e:
-        print(f"\n错误: {e}")
+        print(f"\nError: {e}")
         sys.exit(1)
     finally:
         sock.close()
 
-    print("\n升级完成！")
+    print("\nUpdate complete!")
     if new_fw_version:
-        print(f"新固件版本: {new_fw_version}")
-    print("设备正在重启，IAP 将自动拷贝新固件...")
-    print("请等待约 20 秒，设备将自动重新连接。")
+        print(f"New firmware version: {new_fw_version}")
+    print("Device is rebooting, IAP will copy the new firmware automatically...")
+    print("Please wait ~20 seconds for the device to reconnect.")
 
 
 if __name__ == "__main__":
