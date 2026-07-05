@@ -46,28 +46,42 @@ Both components share the main firmware's SDK (`../firmware/SDK/`).
 
 ## OTA Package Format (.imfw)
 
-OTA images are encrypted and signed before transmission:
+### v2 (firmware 1.6.0+, current)
+
+OTA images are encrypted, then the header is signed with ECDSA P-256.
+The device verifies the signature on-chip (uECC) before accepting an image:
 
 ```
-┌──────────────────────────────────┐
-│ Header (64 B)                    │
-│   Magic: "IMFW"                  │
-│   HW ID, version, image size    │
-│   AES IV (16 B)                  │
-│   HMAC-SHA256 of header (32 B)  │
-├──────────────────────────────────┤
-│ Encrypted firmware data          │
-│   AES-128-CTR(plaintext image)  │
-├──────────────────────────────────┤
-│ SHA256 of plaintext image (32 B)│
-└──────────────────────────────────┘
+┌────────────────────────────────────────────┐
+│ Header prefix (64 B)                       │
+│   0x00  Magic "IMFW"                       │
+│   0x04  Format version (0x02)              │
+│   0x06  Hardware ID                        │
+│   0x08  Firmware size                      │
+│   0x0C  Security version (SVN)             │
+│   0x10  AES IV (16 B)                      │
+│   0x20  SHA256 of plaintext image (32 B)   │
+├────────────────────────────────────────────┤
+│ ECDSA P-256 signature over prefix (64 B)   │
+│   raw r ‖ s, verified on-device            │
+├────────────────────────────────────────────┤
+│ 0x80: AES-128-CTR encrypted firmware data  │
+└────────────────────────────────────────────┘
 ```
 
-| Layer | Algorithm | Key Size |
-|-------|-----------|----------|
-| Encryption | AES-128-CTR | 128-bit |
-| Header signature | HMAC-SHA256 | 256-bit |
-| Image integrity | SHA256 | 256-bit |
+| Layer | Algorithm | Notes |
+|-------|-----------|-------|
+| Encryption | AES-128-CTR | 128-bit key |
+| Header signature | ECDSA P-256 (SHA256 digest) | verified on-chip before flashing |
+| Image integrity | SHA256 | checked after decryption |
+| Anti-rollback | SVN (security version) | device refuses images below its SVN floor |
+
+### v1 (firmware ≤1.5.x, legacy)
+
+Same layout with a 32 B HMAC-SHA256 header signature instead of ECDSA
+(96 B total header, payload at 0x60). Firmware 1.6.0 acts as a bridge:
+it is the last HMAC-verified update a legacy device accepts; from then on
+only ECDSA-signed v2 images are accepted.
 
 ## Usage
 
@@ -110,3 +124,15 @@ python3 ota/generate_ota_keys.py
 This generates:
 - `firmware/APP/include/ota_keys.h` (C header for firmware)
 - `ota/ota_keys.py` (Python keys for packaging/update scripts)
+
+### Release Tooling
+
+```bash
+ota/release-web.sh              # Build release .imfw + stage website firmware
+                                # distribution (manifest.json + assets) in ota/web-dist/
+ota/release-github.sh           # Build release .imfw + publish it as a GitHub
+                                # Release asset (build is local; needs SDK + keys)
+ota/deploy-fw.sh                # End-to-end web release: build, stage manifest,
+                                # copy to website/fw/, deploy site, verify live
+python3 ota/test_imfw_v2.py     # Packaging self-tests for the v2 (ECDSA) format
+```
