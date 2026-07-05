@@ -40,7 +40,8 @@ DEFAULT_FW_PATH = _default_firmware_path()
 IMAGE_B_SIZE = 216 * 1024  # 216KB
 CHUNK_SIZE = 240  # ≤243, 16-byte aligned
 IMFW_MAGIC = 0x494D4657  # "IMFW"
-IMFW_HEADER_SIZE = 96
+IMFW_HEADER_SIZE_V1 = 96   # HMAC format (<=1.5.x bootstrap)
+IMFW_HEADER_SIZE_V2 = 128  # ECDSA format (1.6.0+)
 
 
 def connect_socket(path):
@@ -77,18 +78,25 @@ def progress_bar(current, total, prefix="", width=40):
 
 def parse_imfw(data):
     """Parse .imfw file. Returns header info + encrypted firmware, or None."""
-    if len(data) < IMFW_HEADER_SIZE:
+    if len(data) < IMFW_HEADER_SIZE_V1:
         return None
 
     magic = struct.unpack_from("<I", data, 0)[0]
     if magic != IMFW_MAGIC:
         return None
 
-    header = data[:IMFW_HEADER_SIZE]
-    encrypted_fw = data[IMFW_HEADER_SIZE:]
+    # Header size depends on the format version byte (0x04).
+    version = data[4]
+    header_size = IMFW_HEADER_SIZE_V2 if version >= 2 else IMFW_HEADER_SIZE_V1
+    if len(data) < header_size:
+        return None
 
-    # Parse header fields for display
+    header = data[:header_size]
+    encrypted_fw = data[header_size:]
+
+    # Parse common header fields for display.
     _, version, flags, hw_id, fw_size = struct.unpack_from("<IBBHI", header, 0)
+    sec_version = struct.unpack_from("<H", header, 0x0C)[0] if version >= 2 else None
 
     return {
         "header": header,
@@ -96,33 +104,24 @@ def parse_imfw(data):
         "version": version,
         "hw_id": hw_id,
         "fw_size": fw_size,
+        "sec_version": sec_version,
     }
 
 
 def read_fw_version(imfw_path):
-    """Read firmware version from .fw_version file next to the .imfw, or from version.h."""
-    # Try .fw_version in same directory
-    build_dir = os.path.dirname(imfw_path)
-    ver_file = os.path.join(build_dir, ".fw_version")
+    """Firmware version of the .imfw being pushed.
+
+    The .imfw header carries no semver field, so this is only known when a
+    .fw_version sidecar (written by the build) sits next to the file. Do NOT
+    fall back to parsing the local version.h: that reports whatever is checked
+    out now (e.g. 1.6.0) regardless of which .imfw you push — misleading when
+    flashing an older package from dist/. Return None when unknown; the caller
+    just omits the line.
+    """
+    ver_file = os.path.join(os.path.dirname(imfw_path), ".fw_version")
     if os.path.isfile(ver_file):
         with open(ver_file) as f:
             return f.read().strip()
-
-    # Try version.h relative to build dir (build/../APP/include/version.h)
-    version_h = os.path.join(build_dir, "..", "APP", "include", "version.h")
-    if os.path.isfile(version_h):
-        major = minor = patch = ""
-        with open(version_h) as f:
-            for line in f:
-                if "FW_VERSION_MAJOR" in line:
-                    major = line.split()[-1]
-                elif "FW_VERSION_MINOR" in line:
-                    minor = line.split()[-1]
-                elif "FW_VERSION_PATCH" in line:
-                    patch = line.split()[-1]
-        if major and minor and patch:
-            return f"{major}.{minor}.{patch}"
-
     return None
 
 

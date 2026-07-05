@@ -1,22 +1,44 @@
 #!/usr/bin/env python3
-"""Generate OTA encryption/signing keys
+"""Generate OTA encryption/signing keys.
 
-Generates two files:
-  - firmware/APP/include/ota_keys.h (C header)
-  - ota/ota_keys.py (Python key file)
+Asymmetric-signing migration (1.6.0+):
+  - Symmetric keys (AES + HMAC) are PRESERVED once they exist. Fielded
+    <=1.5.x devices have them baked in; regenerating would break OTA for
+    every deployed device. The HMAC key is still needed on the BUILD side
+    to sign the 1.6.0 bootstrap (v1 format) for those devices.
+  - An EC (ECDSA P-256 / secp256r1) keypair is added. Only the PUBLIC key
+    ships in firmware (verify-only); the private key never leaves the build
+    machine / offline signer.
 
-Neither file should be committed to git.
+Outputs (neither committed — both gitignored):
+  - firmware/APP/include/ota_keys.h : OTA_AES_KEY + OTA_PUBLIC_KEY[64]
+      (NO HMAC key — 1.6.0+ firmware is verify-only and must not embed any
+       signing secret)
+  - ota/ota_keys.py : OTA_AES_KEY + OTA_SIGNING_KEY (v1 bootstrap) +
+      OTA_EC_PRIVATE_PEM (v2 ECDSA signing) + OTA_PUBLIC_KEY
+  - ota/ota_ec_private.pem : the EC private key (for an offline signer)
+
+Run with no args to add the EC keypair while preserving symmetric keys.
+  --regen-ec             regenerate the EC keypair (invalidates 1.6.0+ trust)
+  --allow-new-symmetric  permit minting fresh AES/HMAC keys when none exist
+                         (DANGER: only for a brand-new project, never for a
+                         deployed fleet)
 """
 
+import importlib.util
 import os
 import secrets
 import sys
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
 
 C_HEADER_PATH = os.path.join(PROJECT_DIR, "firmware", "APP", "include", "ota_keys.h")
 PY_KEYS_PATH = os.path.join(SCRIPT_DIR, "ota_keys.py")
+PEM_PATH = os.path.join(SCRIPT_DIR, "ota_ec_private.pem")
 
 
 def format_c_array(name: str, data: bytes) -> str:
@@ -24,26 +46,73 @@ def format_c_array(name: str, data: bytes) -> str:
     return f"static const uint8_t {name}[{len(data)}] = {{\n    {hex_bytes}\n}};"
 
 
+def load_existing_py_keys():
+    """Load AES/HMAC/EC from an existing ota_keys.py, if present."""
+    if not os.path.exists(PY_KEYS_PATH):
+        return {}
+    spec = importlib.util.spec_from_file_location("ota_keys", PY_KEYS_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    out = {}
+    if hasattr(mod, "OTA_AES_KEY"):
+        out["aes"] = mod.OTA_AES_KEY
+    if hasattr(mod, "OTA_SIGNING_KEY"):
+        out["signing"] = mod.OTA_SIGNING_KEY
+    if hasattr(mod, "OTA_EC_PRIVATE_PEM"):
+        out["ec_pem"] = mod.OTA_EC_PRIVATE_PEM
+    return out
+
+
+def pubkey_raw_xy(priv: ec.EllipticCurvePrivateKey) -> bytes:
+    """64-byte big-endian X||Y, matching uECC's secp256r1 public-key format."""
+    nums = priv.public_key().public_numbers()
+    return nums.x.to_bytes(32, "big") + nums.y.to_bytes(32, "big")
+
+
 def main():
-    # Check if keys already exist
-    if os.path.exists(C_HEADER_PATH) and os.path.exists(PY_KEYS_PATH):
-        print(f"Key files already exist:")
-        print(f"  {C_HEADER_PATH}")
-        print(f"  {PY_KEYS_PATH}")
-        if "--force" not in sys.argv:
-            print("Use --force to regenerate")
+    regen_ec = "--regen-ec" in sys.argv
+    allow_new_symmetric = "--allow-new-symmetric" in sys.argv
+
+    existing = load_existing_py_keys()
+
+    # --- Symmetric keys: preserve if present, never silently regenerate. ---
+    aes_key = existing.get("aes")
+    signing_key = existing.get("signing")
+    if aes_key is None or signing_key is None:
+        if not allow_new_symmetric:
+            print("Error: no existing symmetric keys found in ota_keys.py.")
+            print("Fielded devices have AES/HMAC keys baked in — minting fresh")
+            print("ones would break their OTA. If this is a brand-new project,")
+            print("re-run with --allow-new-symmetric.")
             sys.exit(1)
-        print("--force: regenerating keys")
+        aes_key = aes_key or secrets.token_bytes(16)
+        signing_key = signing_key or secrets.token_bytes(32)
+        print("WARNING: minted NEW symmetric keys (--allow-new-symmetric).")
 
-    # Generate keys
-    aes_key = secrets.token_bytes(16)   # AES-128 key
-    signing_key = secrets.token_bytes(32)  # HMAC-SHA256 key
+    # --- EC keypair: preserve if present unless --regen-ec. ---
+    ec_pem = existing.get("ec_pem")
+    if ec_pem and not regen_ec:
+        priv = serialization.load_pem_private_key(ec_pem.encode(), password=None)
+        print("Preserved existing EC (P-256) keypair.")
+    else:
+        priv = ec.generate_private_key(ec.SECP256R1())
+        ec_pem = priv.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode()
+        print("Generated new EC (P-256) keypair.")
 
-    # Write C header
+    pub64 = pubkey_raw_xy(priv)
+
+    # --- ota_keys.h (firmware): AES + PUBLIC only, NO signing secret. ---
     c_content = f"""\
 /*
- * OTA Encryption/Signing Keys
+ * OTA Keys (firmware, verify-only)
  * AUTO-GENERATED by generate_ota_keys.py - DO NOT COMMIT TO GIT
+ *
+ * 1.6.0+ embeds only the EC public key (ECDSA P-256 verify) plus the AES
+ * key needed to decrypt the payload. No signing secret ships in firmware.
  */
 
 #ifndef OTA_KEYS_H
@@ -54,8 +123,8 @@ def main():
 /* AES-128 encryption key (16 bytes) */
 {format_c_array("OTA_AES_KEY", aes_key)}
 
-/* HMAC-SHA256 signing key (32 bytes) */
-{format_c_array("OTA_SIGNING_KEY", signing_key)}
+/* ECDSA P-256 public key, raw big-endian X||Y (64 bytes) */
+{format_c_array("OTA_PUBLIC_KEY", pub64)}
 
 #endif /* OTA_KEYS_H */
 """
@@ -64,19 +133,33 @@ def main():
         f.write(c_content)
     print(f"Generated: {C_HEADER_PATH}")
 
-    # Write Python keys
+    # --- ota_keys.py (build): AES + HMAC (v1) + EC private (v2) + public. ---
     py_content = f"""\
-# OTA Encryption/Signing Keys
+# OTA Keys (build side)
 # AUTO-GENERATED by generate_ota_keys.py - DO NOT COMMIT TO GIT
 
 OTA_AES_KEY = bytes.fromhex("{aes_key.hex()}")
+
+# HMAC key — used ONLY to sign the 1.6.0 bootstrap (v1 format) for <=1.5.x
+# devices. Not embedded in 1.6.0+ firmware.
 OTA_SIGNING_KEY = bytes.fromhex("{signing_key.hex()}")
+
+# EC public key, raw big-endian X||Y (matches firmware OTA_PUBLIC_KEY).
+OTA_PUBLIC_KEY = bytes.fromhex("{pub64.hex()}")
+
+# EC private key (PEM) — v2 ECDSA signing. Keep on the offline signer only.
+OTA_EC_PRIVATE_PEM = \"\"\"\\
+{ec_pem}\"\"\"
 """
     with open(PY_KEYS_PATH, "w") as f:
         f.write(py_content)
     print(f"Generated: {PY_KEYS_PATH}")
 
-    print("\nKey generation complete. Make sure these files are not committed to git.")
+    with open(PEM_PATH, "w") as f:
+        f.write(ec_pem)
+    print(f"Generated: {PEM_PATH}")
+
+    print("\nDone. Ensure ota_keys.h, ota_keys.py and ota_ec_private.pem stay out of git.")
 
 
 if __name__ == "__main__":

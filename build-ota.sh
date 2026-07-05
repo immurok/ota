@@ -3,7 +3,7 @@
 # immurok CH592F OTA Build Script (WCH 方式一)
 #
 # Usage:
-#   ./build-ota.sh                 # debug (default)
+#   ./build-ota.sh                 # VER=6 release (default)
 #   ./build-ota.sh debug           # DEBUG=3, HAL_SLEEP=FALSE
 #   ./build-ota.sh release-debug   # DEBUG=3, HAL_SLEEP=TRUE
 #   ./build-ota.sh release         # no debug, HAL_SLEEP=TRUE
@@ -45,8 +45,8 @@ for arg in "$@"; do
         *) MODE="$arg" ;;
     esac
 done
-MODE="${MODE:-debug}"
-HW_VER="${HW_VER:-5}"
+MODE="${MODE:-release}"
+HW_VER="${HW_VER:-6}"
 
 # Validate variant if set
 if [ -n "$FW_VARIANT" ]; then
@@ -68,10 +68,11 @@ case "$MODE" in
         echo "  VER=1           Hardware VER1 (Rev.1 board)"
         echo "  VER=2           Hardware VER2 (Rev.2 board, ZW3021)"
         echo "  VER=3           Hardware VER3 (Rev.2 board + R599S module)"
-        echo "  VER=5           Hardware VER5 (Rev.3 board — default, latest)"
-        echo "  debug           DEBUG + no sleep (default)"
+        echo "  VER=5           Hardware VER5 (Rev.3 board)"
+        echo "  VER=6           Hardware VER6 (Rev.3 + 防拆, default, latest)"
+        echo "  debug           DEBUG + no sleep"
         echo "  release-debug   DEBUG + sleep (for diagnosing sleep issues)"
-        echo "  release         No debug, sleep enabled (production)"
+        echo "  release         No debug, sleep enabled (production, default)"
         echo "  clean           Clean all builds"
         exit 1
         ;;
@@ -200,8 +201,12 @@ APP_BIN="$APP_DIR/build/immurok_CH592F.bin"
 IMFW_OUTPUT="$OUTPUT_DIR/immurok_CH592F.imfw"
 
 if [ -f "$PACKAGE_SCRIPT" ] && [ -f "$KEYS_FILE" ]; then
-    echo_info "Packaging .imfw (encrypted + signed)..."
-    python3 "$PACKAGE_SCRIPT" "$APP_BIN" -o "$IMFW_OUTPUT"
+    # IMFW_FORMAT: v2 (ECDSA, default for 1.6.0+) or v1 (HMAC, only for the
+    # 1.6.0 bootstrap that <=1.5.x devices must accept). IMFW_SEC_VERSION sets
+    # the v2 anti-rollback SVN.
+    echo_info "Packaging .imfw (format=${IMFW_FORMAT:-v2}, encrypted + signed)..."
+    python3 "$PACKAGE_SCRIPT" "$APP_BIN" -o "$IMFW_OUTPUT" \
+        --format "${IMFW_FORMAT:-v2}" --sec-version "${IMFW_SEC_VERSION:-1}"
     if [ $? -eq 0 ]; then
         imfw_size=$(stat -f%z "$IMFW_OUTPUT" 2>/dev/null || stat -c%s "$IMFW_OUTPUT" 2>/dev/null)
         echo_info ".imfw size: $imfw_size bytes ($(( imfw_size / 1024 ))KB)"

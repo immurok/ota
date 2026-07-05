@@ -46,18 +46,19 @@ for arg in "$@"; do
             echo "  VER=1           Hardware VER1 (Rev.1 board)"
             echo "  VER=2           Hardware VER2 (Rev.2 board, ZW3021)"
             echo "  VER=3           Hardware VER3 (Rev.2 board + R599S module)"
-            echo "  VER=5           Hardware VER5 (Rev.3 board — default, latest)"
+            echo "  VER=5           Hardware VER5 (Rev.3 board)"
+            echo "  VER=6           Hardware VER6 (Rev.3 + 防拆, default, latest)"
             echo "  VARIANT=W|B|G   Color SKU; omit for general SKU (DIS \"IK-1\")"
-            echo "  debug           Rebuild debug + flash (default)"
+            echo "  debug           Rebuild debug + flash"
             echo "  release-debug   Rebuild release-debug + flash"
-            echo "  release         Rebuild release + flash"
+            echo "  release         Rebuild release + flash (default)"
             echo "  -f              Flash only (skip rebuild)"
             exit 1
             ;;
     esac
 done
-MODE="${MODE:-debug}"
-HW_VER="${HW_VER:-5}"
+MODE="${MODE:-release}"
+HW_VER="${HW_VER:-6}"
 
 HEX_FILE="$FIRMWARE_BUILD/immurok_OTA_Combined.hex"
 
