@@ -33,8 +33,14 @@ if [ "${1:-}" != "--no-build" ]; then
 fi
 [ -f "$IMFW_BUILD" ] || die "no .imfw at $IMFW_BUILD (run without --no-build)"
 
-VER_STR="$(sed -n 's/.*FW_VERSION_STRING[[:space:]]*"\([0-9.]*\)".*/\1/p' "$VERSION_H")"
-[ -n "$VER_STR" ] || die "cannot parse FW_VERSION_STRING"
+# 版本号从 MAJOR/MINOR/PATCH 数字宏拼接 —— version.h 的 FW_VERSION_STRING 现在
+# 是宏派生(编译期由三个数字宏拼接),源码里没有字面量字符串可 sed(2026-08-03 起,
+# 避免手写字符串与数字宏不一致)。
+_vmaj="$(sed -n 's/.*FW_VERSION_MAJOR[[:space:]]*\([0-9]*\).*/\1/p' "$VERSION_H" | head -1)"
+_vmin="$(sed -n 's/.*FW_VERSION_MINOR[[:space:]]*\([0-9]*\).*/\1/p' "$VERSION_H" | head -1)"
+_vpat="$(sed -n 's/.*FW_VERSION_PATCH[[:space:]]*\([0-9]*\).*/\1/p' "$VERSION_H" | head -1)"
+VER_STR="$_vmaj.$_vmin.$_vpat"
+[ -n "$_vmaj" ] && [ -n "$_vmin" ] && [ -n "$_vpat" ] || die "cannot parse FW_VERSION_MAJOR/MINOR/PATCH from $VERSION_H"
 SEC_VER="$(sed -n 's/.*FW_SEC_VERSION[[:space:]]*\([0-9]*\).*/\1/p' "$VERSION_H" | head -1)"
 
 mkdir -p "$DIST"
