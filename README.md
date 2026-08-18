@@ -85,32 +85,42 @@ only ECDSA-signed v2 images are accepted.
 
 ## Usage
 
+Prerequisites: clone this repository and [`firmware`](https://github.com/immurok/firmware) side by side (the scripts resolve `../firmware` relative to their own location), install the toolchain and SDK, and generate OTA keys once — see [firmware/README.md](https://github.com/immurok/firmware#readme) for all three steps. The commands below assume you run them from the common parent directory.
+
 ### Build (compile all components + package)
 
 ```bash
-# From project root:
 ota/build-ota.sh release          # Production (no debug, sleep enabled)
 ota/build-ota.sh release-debug    # Debug logs + sleep
 ota/build-ota.sh debug            # Debug logs, no sleep
+ota/build-ota.sh --ver=5 release  # Build for a specific hardware revision (default: 6)
 ```
 
-This builds JumpIAP, Application, and IAP, then combines them into a single flashable image and packages the `.imfw` OTA file.
+This builds JumpIAP, Application, and IAP, then combines them into a single flashable image (`firmware/build/immurok_OTA_Combined.hex`) and packages the `.imfw` OTA file.
 
-### Flash (wired, via WCH-LinkE)
+### Flash (wired)
+
+Two paths — both are described step by step in [firmware/README.md → Flashing](https://github.com/immurok/firmware#flashing):
+
+- **Serial ISP** via the device's debug header (UART1 + BOOT pad) with [`wchisp`](https://github.com/ch32-rs/wchisp) — the path available on production devices.
+- **2-wire debug** (PB14/PB15 test points) with a **WCH-LinkE** (the "E" model is required; the original WCH-Link does not support CH59x):
 
 ```bash
-# From project root:
-ota/upload-ota.sh release         # Build + flash combined image
+ota/upload-ota.sh release         # Build + flash combined image (wlink + WCH-LinkE)
 ota/upload-ota.sh -f              # Flash only (skip build)
 ```
 
 ### OTA Update (wireless, via BLE)
 
+Requires the immurok companion app running on this machine and already paired with the device — the script hands the `.imfw` to the app over a local socket, and the app transfers it over BLE:
+
 ```bash
 python3 ota/ota-update.py firmware/build/immurok_CH592F.imfw
 ```
 
-The companion app receives the `.imfw` file over BLE, writes it to Image B, sets the ImageFlag, and reboots the device. The IAP bootloader then copies Image B to Image A.
+The device writes the image to Image B, sets the ImageFlag, and reboots. The IAP bootloader then copies Image B to Image A.
+
+Note: the device verifies the package signature before accepting it — see [Self-built firmware & OTA keys](#self-built-firmware--ota-keys).
 
 ### Generate OTA Keys
 
@@ -125,7 +135,9 @@ This generates:
 - `firmware/APP/include/ota_keys.h` (C header for firmware)
 - `ota/ota_keys.py` (Python keys for packaging/update scripts)
 
-### Release Tooling
+### Release Tooling (maintainers)
+
+These require the private release keys and the website repository — they are not usable from a public checkout:
 
 ```bash
 ota/release-web.sh              # Build release .imfw + stage website firmware
@@ -136,3 +148,10 @@ ota/deploy-fw.sh                # End-to-end web release: build, stage manifest,
                                 # copy to website/fw/, deploy site, verify live
 python3 ota/test_imfw_v2.py     # Packaging self-tests for the v2 (ECDSA) format
 ```
+
+## Self-built Firmware & OTA Keys
+
+The device only accepts OTA packages signed with the ECDSA key whose public half is baked into the firmware it is currently running. Practical consequences:
+
+- A `.imfw` you build and sign with your own generated keys is **rejected over OTA** by a device running official immurok firmware. The only way to install self-built firmware on such a device is a **wired flash** (serial ISP or WCH-LinkE), which replaces the whole flash including the embedded public key.
+- After wired-flashing a self-built image, **official OTA releases no longer verify** on that device — it now trusts your keys, not immurok's. You can keep updating it over OTA with packages signed by your own `ota_keys.py`, or wire-flash back to an official combined image at any time.
