@@ -100,11 +100,12 @@ cp "$WEB_DIST"/manifest.json "$FW_PUB_DIR"/
 info "已拷贝到 ${FW_PUB_DIR}："
 ls -la "$FW_PUB_DIR" | sed 's/^/    /'
 
-# 固件二进制不入 git（避免进公开镜像 + 仓库膨胀）；wrangler 仍会上传工作目录
-WEB_GI="$WEB_DIR/.gitignore"
-if ! { [ -f "$WEB_GI" ] && grep -qx 'fw/' "$WEB_GI"; }; then
-    echo 'fw/' >> "$WEB_GI"
-    info "已把 fw/ 加入 website/.gitignore（固件不入版本库，仅随部署上传）"
+# 固件二进制正常入 git（随仓库走）：曾经把 website/fw/ gitignore 掉，结果只要
+# 有人在没有本地 fw/ 的机器上跑一次普通的 `wrangler pages deploy .`（比如只是
+# 改网页文案），Cloudflare Pages 的整站快照替换就会把线上 /fw/ 清空——2026-08-09
+# 就这么把固件文件搞丢过一次。所以现在 fw/ 必须提交，提醒操作者别忘了。
+if [ -n "$(git -C "$WEB_DIR" status --porcelain -- fw/ 2>/dev/null)" ]; then
+    warn "website/fw/ 有未提交的改动，记得 git add website/fw/ && git commit，否则下次别人在没有这些文件的检出上部署网站，线上 /fw/ 会再次被清空"
 fi
 
 # manifest 缓存 5 分钟（发布后尽快生效），其余 /fw/ 资产按内容命名可长缓存
